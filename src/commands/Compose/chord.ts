@@ -1,6 +1,7 @@
 import { ApplyOptions } from "@sapphire/decorators";
 import { Command } from "@sapphire/framework";
 import { Chord, Note, Progression } from "tonal";
+import tonejs from "@tonejs/midi";
 import { Canvas } from "canvas-constructor/napi-rs";
 
 const ROMAN_NUMBER_NOTE = ["i", "ii", "iii", "iv", "v", "vi", "vii"];
@@ -42,9 +43,21 @@ export class ChordCommand extends Command {
         await interaction.deferReply();
 
         const chords = this.getProgressions(input, romanNumeralMode);
+        let tooLong = false;
+        if (chords.length > 10) {
+            tooLong = true;
+            chords.splice(10, chords.length);
+        }
         if (chords.filter(x => !x.empty).length < 1) return interaction.editReply({ content: "nothing to show"});
         const image = this.drawChords(chords);
-        interaction.editReply({ files: [{ attachment: image }]});
+        const midi = this.makeMidi(chords);
+        interaction.editReply({
+            content: tooLong ? "Only 10 chords are viewed because the input is too long" : "",
+            files: [
+                { name: "chords.png", attachment: image },
+                { name: "chords.mid", attachment: midi },
+            ]
+        });
     }
 
     private getProgressions(input: string, romanNumeralMode: string | null): ChordResult[] {
@@ -116,5 +129,30 @@ export class ChordCommand extends Command {
             if (chord.length) h += 30;
         }
         return canvas.canvas.toBuffer("image/png");
+    }
+
+    private makeMidi(chords: ChordResult[]) {
+        const midi = new tonejs.Midi();
+        const track = midi.addTrack();
+        midi.header.setTempo(60);
+        track.name = "CHORDS PROGRESSIONS";
+        track.channel = 1;
+
+        const duration = 1;
+        
+        for (let iChord = 0; iChord < chords.length; iChord++) {
+            const chord = chords[iChord];
+            if (chord.empty) continue;
+            for (const interval of chord.intervals) {
+                const note = Note.transpose(`${chord.tonic}4`, interval);
+                track.addNote({
+                    midi: Note.midi(note)!,
+                    time: iChord * duration,
+                    duration,
+                })
+            }
+        }
+
+        return Buffer.from(midi.toArray());
     }
 }
