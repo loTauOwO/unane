@@ -31,3 +31,4 @@ src/.env
 .env.production.local
 
 tsconfig.tsbuildinfo
+assets

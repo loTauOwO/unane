@@ -160,8 +160,8 @@ export class DetectChordCommand extends Command {
     private drawChord(data: ProgressionsMidiData) {
         const diff = data.maxMidi - data.minMidi;
 
-        const width =  (data.duration > 10 ? (data.duration - (data.duration - 10)) : 10)*12;
-        const height = (diff > 10 ? (diff - (diff - 10)) : 10)*2;
+        const width =  ((data.duration%10) + 1) * 12;
+        const height = ((diff%10) + 1) * 2;
 
         const canvas = new Canvas(
             data.duration * width,
