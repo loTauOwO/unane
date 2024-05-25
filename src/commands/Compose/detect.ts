@@ -3,6 +3,8 @@ import { Command } from "@sapphire/framework";
 import { Chord, Note } from "tonal";
 import tone from "@tonejs/midi";
 import { Canvas } from "canvas-constructor/napi-rs";
+import { AttachmentBuilder, EmbedBuilder, APIEmbedField, ButtonBuilder, ButtonStyle, ActionRowBuilder } from "discord.js";
+import { EmbedLimits } from "@sapphire/discord-utilities";
 
 type ChordResult = ReturnType<typeof Chord.get>;
 interface NoteData {
@@ -43,12 +45,43 @@ export class DetectChordCommand extends Command {
         await interaction.deferReply();
         const file = await fetch(midiFile.url).then(res => res.arrayBuffer());
         const progData = this.getChordsFromMidi(file);
+        if (progData.length < 1) return interaction.editReply({ content: "nothing to show" });
+        
+        const embed = new EmbedBuilder().setColor("LightGrey");
+
+        const fields: APIEmbedField[] = [];
+        const attachments: AttachmentBuilder[] = [];
+        for (let i = 0; i < progData.length; i++) {
+            const track = progData[i];
+            const value = track.progressions
+                .filter(x => !x.chord.empty)
+                .map(({chord}) => chord.symbol);
+
+            attachments.push(new AttachmentBuilder(this.drawChord(track)));
+            if (value.length > 0) fields.push({
+                name: `Track ${i+1}`,
+                value: value.length > 20 ? [value.slice(0, 20), `...and ${value.length - 20}more`].join(" - ") : value.join(" - "),
+                inline: false,
+            });
+        }
+        if (fields.length > 0) embed.addFields(...fields);
+
+        const linkButton = new ButtonBuilder()
+            .setStyle(ButtonStyle.Link)
+            .setURL(midiFile.url)
+            .setLabel("MIDI FILE");
+
+        const row = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(linkButton);
+
         return interaction.editReply({
-            files: progData.map(x => this.drawChord(x))
-        });
+            embeds: [embed],
+            files: attachments,
+            components: [row]
+        })
     }
 
-    private getChordsFromMidi(midiFile: ArrayBuffer, maxTick = 20, maxTrack = 2): ProgressionsMidiData[] {
+    private getChordsFromMidi(midiFile: ArrayBuffer, maxTick = Number.MAX_VALUE, maxTrack = 5): ProgressionsMidiData[] {
         const midi = new tone.Midi(midiFile);
         const results: ProgressionsMidiData[] = [];
 
@@ -56,6 +89,7 @@ export class DetectChordCommand extends Command {
 
         for (const track of midi.tracks) {
             const chords: MidiChordData[] = [];
+            const gap = track.notes[0]?.ticks;
             let maxMidi = 0;
             let minMidi = Number.MAX_VALUE;
             let notesData: NoteData[] = [];
@@ -67,9 +101,9 @@ export class DetectChordCommand extends Command {
                 notes.push(note.midi);
                 notesData.push({
                     midi: note.midi,
-                        pos: note.ticks / midi.header.ppq,
+                        pos: (note.ticks - gap) / midi.header.ppq,
                         length: Math.min(
-                            note.durationTicks / midi.header.ppq,
+                            (note.durationTicks - gap) / midi.header.ppq,
                             midi.header.ppq * maxTick,
                         ),
                 });
@@ -77,7 +111,10 @@ export class DetectChordCommand extends Command {
                     const poopedNote = notes.pop();
                     const poopedData = notesData.pop()!;
                     const chord = this.midiToChords(notes);
-                    if (!chord.empty) chords.push({
+                    if (chord.empty) {
+                        chord.symbol = "?";
+                    }
+                    chords.push({
                         datas: notesData,
                         chord
                     });
@@ -98,7 +135,7 @@ export class DetectChordCommand extends Command {
                     minMidi,
                     maxMidi,
                     duration: Math.min(
-                        midi.durationTicks / midi.header.ppq,
+                        (midi.durationTicks - gap) / midi.header.ppq,
                         maxTick,
                     ),
                 });
@@ -121,14 +158,15 @@ export class DetectChordCommand extends Command {
     }
 
     private drawChord(data: ProgressionsMidiData) {
-        const width = 150;
-        const height = 10;
         const diff = data.maxMidi - data.minMidi;
+
+        const width =  (data.duration > 10 ? (data.duration - (data.duration - 10)) : 10)*12;
+        const height = (diff > 10 ? (diff - (diff - 10)) : 10)*2;
 
         const canvas = new Canvas(
             data.duration * width,
             (diff + 7) * height
-        ).setTextFont("30px Sans");
+        ).setTextFont(`${width > height ? height*3.5 : width*1.5}px Sans`);
 
         let h = 0;
         for (const chord of data.progressions) {
@@ -146,7 +184,9 @@ export class DetectChordCommand extends Command {
                 ).setColor("#FFFFFF")
                 .printText(
                     chordName,
-                    (note.pos * width) + (width / 2) - (met.width / 2),
+                    (note.pos * width)
+                    + (note.length * width / 2)
+                    - (met.width / 2),
                     (diff + 5) * height
                 );
             }
